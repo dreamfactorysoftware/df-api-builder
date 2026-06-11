@@ -56,4 +56,58 @@ class DefinitionExecutorSecurityTest extends FeatureTestCase
         // dry-run so the rejection is proven to happen before any dispatch
         (new DefinitionExecutor())->execute($endpoint, [], true);
     }
+
+    public function test_service_selector_is_not_caller_controlled(): void
+    {
+        // A caller-supplied {body.svc} must NOT redirect which service is hit.
+        $endpoint = $this->endpoint([
+            'type'    => 'service_request',
+            'service' => '{body.svc}',
+            'method'  => 'GET',
+        ]);
+
+        $planned = (new DefinitionExecutor())->execute($endpoint, ['body' => ['svc' => 'secret_service']], true);
+
+        $this->assertSame('{body.svc}', $planned['service'], 'service selector must be static, not interpolated from caller input');
+    }
+
+    public function test_enforces_caller_permissions_by_default(): void
+    {
+        $captured = null;
+        \ServiceManager::shouldReceive('handleServiceRequest')->once()
+            ->andReturnUsing(function ($request, $service, $resource, $checkPermission) use (&$captured) {
+                $captured = $checkPermission;
+                return $this->fakeResponse();
+            });
+
+        $endpoint = $this->endpoint(['type' => 'service_request', 'service' => 'system', 'method' => 'GET']);
+        (new DefinitionExecutor())->execute($endpoint, []);
+
+        $this->assertTrue($captured, 'caller permissions must be enforced by default');
+    }
+
+    public function test_privileged_policy_bypasses_permission_check(): void
+    {
+        $captured = null;
+        \ServiceManager::shouldReceive('handleServiceRequest')->once()
+            ->andReturnUsing(function ($request, $service, $resource, $checkPermission) use (&$captured) {
+                $captured = $checkPermission;
+                return $this->fakeResponse();
+            });
+
+        $endpoint = $this->endpoint(['type' => 'service_request', 'service' => 'system', 'method' => 'GET']);
+        $endpoint->policy = ['privileged' => true];
+        (new DefinitionExecutor())->execute($endpoint, []);
+
+        $this->assertFalse($captured, 'privileged policy should dispatch without permission checks');
+    }
+
+    private function fakeResponse(int $status = 200, $content = [])
+    {
+        $response = \Mockery::mock(\DreamFactory\Core\Contracts\ServiceResponseInterface::class);
+        $response->shouldReceive('getStatusCode')->andReturn($status);
+        $response->shouldReceive('getContent')->andReturn($content);
+
+        return $response;
+    }
 }

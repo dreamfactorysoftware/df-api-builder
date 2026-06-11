@@ -39,6 +39,12 @@ class DefinitionExecutor
             'steps' => [],
         ];
 
+        // By default a built API enforces the caller's permissions on the
+        // backing services it composes. An endpoint may opt into privileged
+        // (gateway) dispatch via its policy: {"privileged": true}.
+        $policy = (array)$endpoint->policy;
+        $checkPermission = !(bool)array_get($policy, 'privileged', false);
+
         $last = null;
         foreach ($steps as $index => $step) {
             $type = array_get($step, 'type', 'service_request');
@@ -47,7 +53,7 @@ class DefinitionExecutor
             }
 
             $key = array_get($step, 'output_key', array_get($step, 'id', 'step_' . $index));
-            $last = $this->executeServiceRequestStep($step, $context, $dryRun);
+            $last = $this->executeServiceRequestStep($step, $context, $dryRun, $checkPermission);
             $context['steps'][$key] = $last;
         }
 
@@ -59,11 +65,15 @@ class DefinitionExecutor
         return $last;
     }
 
-    protected function executeServiceRequestStep(array $step, array $context, bool $dryRun = false)
+    protected function executeServiceRequestStep(array $step, array $context, bool $dryRun = false, bool $checkPermission = true)
     {
-        $service = $this->resolveValue(array_get($step, 'service'), $context);
-        $resource = $this->resolveValue(array_get($step, 'resource', ''), $context);
-        $method = strtoupper((string)$this->resolveValue(array_get($step, 'method', Verbs::GET), $context));
+        // Selectors (which service/resource/method to invoke) are admin-authored
+        // and STATIC — never interpolated from caller input — so a caller cannot
+        // redirect the call to an internal service (SSRF). Only params/body below
+        // resolve caller-derived data.
+        $service = array_get($step, 'service');
+        $resource = array_get($step, 'resource', '');
+        $method = strtoupper((string)array_get($step, 'method', Verbs::GET));
         $params = (array)$this->resolveValue((array)array_get($step, 'params', []), $context);
         $body = $this->resolveValue(array_get($step, 'body'), $context);
 
@@ -93,7 +103,7 @@ class DefinitionExecutor
             $request->setContent($body, DataFormats::PHP_ARRAY);
         }
 
-        $response = ServiceManager::handleServiceRequest($request, $service, $resource, false);
+        $response = ServiceManager::handleServiceRequest($request, $service, $resource, $checkPermission);
         $status = $response->getStatusCode();
         $content = $this->normalizeResponseContent($response->getContent());
 

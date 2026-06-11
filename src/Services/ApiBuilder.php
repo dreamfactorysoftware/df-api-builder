@@ -123,11 +123,20 @@ class ApiBuilder extends BaseRestService
             throw new \DreamFactory\Core\Exceptions\NotFoundException("No built endpoint matched {$method} {$resource}.");
         }
 
-        return (new DefinitionExecutor())->execute($endpoint, [
+        return (new DefinitionExecutor())->execute($endpoint, $this->buildExecutorInput($request, $pathParams));
+    }
+
+    /**
+     * Assemble the execution-plan input (path params, query, body) from the
+     * inbound request. Extracted so body/query forwarding is unit-testable.
+     */
+    protected function buildExecutorInput(ServiceRequestInterface $request, array $pathParams): array
+    {
+        return [
             'path'  => $pathParams,
             'query' => (array)$request->getParameters(),
-            'body'  => [],
-        ]);
+            'body'  => (array)$request->getPayloadData(),
+        ];
     }
 
     protected function matchEndpointPath(string $template, string $path)

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Runs INSIDE the dev container against the mounted app autoloader:
+    docker exec df-development-web-1 \
+      vendor/bin/phpunit -c vendor/dreamfactory/df-api-builder/phpunit.xml.dist
+  Paths are relative to this file's location under
+  /opt/dreamfactory/vendor/dreamfactory/df-api-builder, so ../../autoload.php
+  resolves to the app's vendor/autoload.php. There is no standalone vendor/ in
+  this package; it uses the host app's L13 dependency tree.
+-->
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         bootstrap="../../autoload.php"
+         colors="true"
+         cacheDirectory=".phpunit.cache"
+         failOnWarning="true"
+         failOnRisky="true">
+  <testsuites>
+    <testsuite name="Unit">
+      <directory>tests/Unit</directory>
+    </testsuite>
+    <testsuite name="Feature">
+      <directory>tests/Feature</directory>
+    </testsuite>
+  </testsuites>
+  <source>
+    <include>
+      <directory>src</directory>
+    </include>
+  </source>
+</phpunit>

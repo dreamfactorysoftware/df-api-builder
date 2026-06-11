@@ -11,7 +11,20 @@ use ServiceManager;
 
 class DefinitionExecutor
 {
-    public function execute(EndpointDefinition $endpoint, array $input = [])
+    /** HTTP verbs a service_request step is allowed to invoke. */
+    protected const ALLOWED_METHODS = [
+        Verbs::GET,
+        Verbs::POST,
+        Verbs::PUT,
+        Verbs::PATCH,
+        Verbs::DELETE,
+    ];
+
+    /**
+     * @param bool $dryRun When true, steps are resolved and validated but no
+     *                     backing service is dispatched (no live side effects).
+     */
+    public function execute(EndpointDefinition $endpoint, array $input = [], bool $dryRun = false)
     {
         $plan = (array)$endpoint->execution_plan;
         $steps = (array)array_get($plan, 'steps', []);
@@ -34,7 +47,7 @@ class DefinitionExecutor
             }
 
             $key = array_get($step, 'output_key', array_get($step, 'id', 'step_' . $index));
-            $last = $this->executeServiceRequestStep($step, $context);
+            $last = $this->executeServiceRequestStep($step, $context, $dryRun);
             $context['steps'][$key] = $last;
         }
 
@@ -46,11 +59,11 @@ class DefinitionExecutor
         return $last;
     }
 
-    protected function executeServiceRequestStep(array $step, array $context)
+    protected function executeServiceRequestStep(array $step, array $context, bool $dryRun = false)
     {
         $service = $this->resolveValue(array_get($step, 'service'), $context);
         $resource = $this->resolveValue(array_get($step, 'resource', ''), $context);
-        $method = strtoupper($this->resolveValue(array_get($step, 'method', Verbs::GET), $context));
+        $method = strtoupper((string)$this->resolveValue(array_get($step, 'method', Verbs::GET), $context));
         $params = (array)$this->resolveValue((array)array_get($step, 'params', []), $context);
         $body = $this->resolveValue(array_get($step, 'body'), $context);
 
@@ -58,8 +71,25 @@ class DefinitionExecutor
             throw new BadRequestException('service_request step requires service.');
         }
 
+        if (!in_array($method, static::ALLOWED_METHODS, true)) {
+            throw new BadRequestException("Unsupported HTTP method '{$method}' in service_request step.");
+        }
+
+        $sendsBody = !is_null($body) && !in_array($method, [Verbs::GET, Verbs::DELETE], true);
+
+        if ($dryRun) {
+            return [
+                'dry_run'  => true,
+                'service'  => $service,
+                'resource' => $resource,
+                'method'   => $method,
+                'params'   => $params,
+                'body'     => $sendsBody ? $body : null,
+            ];
+        }
+
         $request = new ApiBuilderServiceRequest($method, $params);
-        if (!is_null($body) && !in_array($method, [Verbs::GET, Verbs::DELETE], true)) {
+        if ($sendsBody) {
             $request->setContent($body, DataFormats::PHP_ARRAY);
         }
 

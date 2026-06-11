@@ -33,10 +33,14 @@ class TestResource extends BaseRestResource
 
         $executor = new DefinitionExecutor();
 
+        // Safe by default: testing a definition resolves the plan without
+        // dispatching to backing services. Pass "dry_run": false to execute live.
+        $dryRun = (bool)array_get($payload, 'dry_run', true);
+
         return $executor->execute($endpoint, [
             'path'  => (array)array_get($payload, 'path_params', []),
             'query' => (array)array_get($payload, 'query', []),
             'body'  => (array)array_get($payload, 'body', []),
-        ]);
+        ], $dryRun);
     }
 }

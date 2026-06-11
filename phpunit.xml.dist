@@ -9,7 +9,7 @@
   this package; it uses the host app's L13 dependency tree.
 -->
 <phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         bootstrap="../../autoload.php"
+         bootstrap="tests/bootstrap.php"
          colors="true"
          cacheDirectory=".phpunit.cache"
          failOnWarning="true"

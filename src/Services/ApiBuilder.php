@@ -80,7 +80,24 @@ class ApiBuilder extends BaseRestService
             return (new OpenApiFactory())->make($api, false);
         }
 
-        return (new OpenApiFactory())->make(null, true);
+        // The api_builder service is the designer/management backend only. Each
+        // built API is exposed by its own dedicated service (see
+        // ApiDefinition::syncServiceInstance), so the designer must NOT
+        // re-advertise the runtime paths under /api/v2/api_builder/... — that
+        // would put "api_builder" in the public URL structure.
+        return [
+            'openapi' => '3.0.0',
+            'info'    => [
+                'title'       => 'API Builder',
+                'description' => 'API Builder management service. Each custom API '
+                    . 'is published as its own service at /api/v2/{api_name}/.',
+                'version'     => '1.0.0',
+            ],
+            'servers' => [
+                ['url' => '/api/v2/api_builder', 'description' => 'API Builder management'],
+            ],
+            'paths'   => new \stdClass(),
+        ];
     }
 
     protected function handleBuiltApiRequest(ServiceRequestInterface $request, string $resource)

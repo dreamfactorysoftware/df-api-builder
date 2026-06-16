@@ -115,7 +115,55 @@ class DefinitionExecutor
             throw new RestException($status, $message);
         }
 
+        // Output rename: a flat {source_name: alias} map on the step renames the
+        // matching keys on each returned row (fields AND relationship keys). This
+        // is a single in-memory key-remap over rows already fetched — no extra
+        // query — so its cost is O(rows × renamed-keys), negligible vs the query.
+        $aliases = (array)array_get($step, 'aliases', []);
+        if (!empty($aliases)) {
+            $content = $this->applyAliases($content, $aliases);
+        }
+
         return $content;
+    }
+
+    protected function applyAliases($content, array $aliases)
+    {
+        if (!is_array($content)) {
+            return $content;
+        }
+
+        // List wrapper: {"resource": [ ...rows... ]}
+        if (isset($content['resource']) && is_array($content['resource'])) {
+            $content['resource'] = array_map(
+                fn($row) => $this->renameKeys($row, $aliases),
+                $content['resource']
+            );
+
+            return $content;
+        }
+
+        // Bare list of rows.
+        if ($content === [] || array_keys($content) === range(0, count($content) - 1)) {
+            return array_map(fn($row) => $this->renameKeys($row, $aliases), $content);
+        }
+
+        // Single record.
+        return $this->renameKeys($content, $aliases);
+    }
+
+    protected function renameKeys($row, array $aliases)
+    {
+        if (!is_array($row)) {
+            return $row;
+        }
+
+        $out = [];
+        foreach ($row as $key => $value) {
+            $out[$aliases[$key] ?? $key] = $value;
+        }
+
+        return $out;
     }
 
     protected function normalizeResponseContent($content)

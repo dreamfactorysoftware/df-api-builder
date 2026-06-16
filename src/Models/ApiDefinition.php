@@ -43,10 +43,46 @@ class ApiDefinition extends BaseSystemModel
     {
         parent::boot();
 
+        // Renaming the URL segment moves the API to a new service name; drop the
+        // service for the old name before the new one is synced below.
+        static::updating(function (ApiDefinition $api) {
+            if ($api->isDirty('base_path')) {
+                $old = trim((string)$api->getOriginal('base_path'), '/');
+                if ($old !== '') {
+                    $api->removeServiceInstance($old);
+                }
+            }
+            return true;
+        });
+
         static::saved(function (ApiDefinition $api) {
             $api->syncServiceInstance();
             return true;
         });
+
+        // Deleting an API removes its published service — just like deleting any
+        // other DreamFactory service-backed API.
+        static::deleted(function (ApiDefinition $api) {
+            $api->removeServiceInstance();
+            return true;
+        });
+    }
+
+    public function removeServiceInstance(?string $name = null): void
+    {
+        $serviceName = $name ?? trim((string)$this->base_path, '/');
+        if (empty($serviceName)) {
+            return;
+        }
+
+        $service = Service::whereName($serviceName)->first();
+        if (
+            $service
+            && $service->type === 'api_builder'
+            && (int)array_get((array)$service->config, 'api_id') === (int)$this->id
+        ) {
+            $service->delete();
+        }
     }
 
     public function syncServiceInstance(): void

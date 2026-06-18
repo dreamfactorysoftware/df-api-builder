@@ -68,6 +68,11 @@ class ApiDefinition extends BaseSystemModel
         });
     }
 
+    public function services()
+    {
+        return $this->hasMany(ApiServiceLink::class, 'api_id');
+    }
+
     public function removeServiceInstance(?string $name = null): void
     {
         $serviceName = $name ?? trim((string)$this->base_path, '/');

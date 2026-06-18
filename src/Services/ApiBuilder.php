@@ -7,11 +7,15 @@ use DreamFactory\Core\ApiBuilder\Models\EndpointDefinition;
 use DreamFactory\Core\ApiBuilder\Resources\DocsResource;
 use DreamFactory\Core\ApiBuilder\Resources\ApiDefinitionResource;
 use DreamFactory\Core\ApiBuilder\Resources\EndpointDefinitionResource;
+use DreamFactory\Core\ApiBuilder\Resources\RelationshipResource;
 use DreamFactory\Core\ApiBuilder\Resources\TestResource;
+use DreamFactory\Core\ApiBuilder\Resources\WorkspaceResource;
 use DreamFactory\Core\ApiBuilder\Runtime\DefinitionExecutor;
 use DreamFactory\Core\ApiBuilder\Support\OpenApiFactory;
 use DreamFactory\Core\Contracts\ServiceRequestInterface;
+use DreamFactory\Core\Exceptions\ForbiddenException;
 use DreamFactory\Core\Utility\ResponseFactory;
+use DreamFactory\Core\Utility\Session;
 use DreamFactory\Core\Services\BaseRestService;
 
 class ApiBuilder extends BaseRestService
@@ -26,6 +30,16 @@ class ApiBuilder extends BaseRestService
             'name'       => EndpointDefinitionResource::RESOURCE_NAME,
             'class_name' => EndpointDefinitionResource::class,
             'label'      => 'Endpoints',
+        ],
+        WorkspaceResource::RESOURCE_NAME => [
+            'name'       => WorkspaceResource::RESOURCE_NAME,
+            'class_name' => WorkspaceResource::class,
+            'label'      => 'Workspace',
+        ],
+        RelationshipResource::RESOURCE_NAME => [
+            'name'       => RelationshipResource::RESOURCE_NAME,
+            'class_name' => RelationshipResource::class,
+            'label'      => 'Relationships',
         ],
         TestResource::RESOURCE_NAME => [
             'name'       => TestResource::RESOURCE_NAME,
@@ -49,6 +63,17 @@ class ApiBuilder extends BaseRestService
         if ($this->name !== 'api_builder' || ($resource && !array_key_exists($firstSegment, static::$resources))) {
             $result = $this->handleBuiltApiRequest($request, $resource);
             return ResponseFactory::create($result);
+        }
+
+        // Designer/management resources (apis, endpoints, test, docs) build and
+        // run API definitions — which provisions backing services and defines
+        // permission-sensitive endpoints. That is a system-administrator
+        // capability, gated here. The built-API RUNTIME path above is NOT gated:
+        // end users still call published endpoints under their own role.
+        if (!Session::isSysAdmin()) {
+            throw new ForbiddenException(
+                'API Builder management is restricted to system administrators.'
+            );
         }
 
         return parent::handleRequest($request, $resource);
@@ -158,11 +183,29 @@ class ApiBuilder extends BaseRestService
 
     protected function matchEndpointPath(string $template, string $path)
     {
+        // Build the regex from the path template by substituting {param} tokens
+        // with capture groups and preg_quote-ing every literal segment, so an
+        // admin-authored path can never inject regex metacharacters (ReDoS /
+        // unintended alternations / over-broad matches).
         $paramNames = [];
-        $pattern = preg_replace_callback('/\{([^}]+)\}/', function ($matches) use (&$paramNames) {
-            $paramNames[] = $matches[1];
-            return '([^\/]+)';
-        }, trim($template, '/'));
+        $pattern = '';
+        $parts = preg_split(
+            '/(\{[^}]+\})/',
+            trim($template, '/'),
+            -1,
+            PREG_SPLIT_DELIM_CAPTURE
+        );
+        foreach ($parts as $part) {
+            if ($part === '') {
+                continue;
+            }
+            if (preg_match('/^\{([^}]+)\}$/', $part, $m)) {
+                $paramNames[] = $m[1];
+                $pattern .= '([^\/]+)';
+            } else {
+                $pattern .= preg_quote($part, '#');
+            }
+        }
 
         if (!preg_match('#^' . $pattern . '$#', trim($path, '/'), $matches)) {
             return false;

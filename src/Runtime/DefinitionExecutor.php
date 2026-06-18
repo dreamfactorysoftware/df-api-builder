@@ -2,15 +2,42 @@
 
 namespace DreamFactory\Core\ApiBuilder\Runtime;
 
+use DreamFactory\Core\ApiBuilder\Models\ApiServiceLink;
 use DreamFactory\Core\ApiBuilder\Models\EndpointDefinition;
+use DreamFactory\Core\Models\Service;
 use DreamFactory\Core\Enums\DataFormats;
+use DreamFactory\Core\Enums\ServiceTypeGroups;
 use DreamFactory\Core\Enums\Verbs;
 use DreamFactory\Core\Exceptions\BadRequestException;
+use DreamFactory\Core\Exceptions\ForbiddenException;
 use DreamFactory\Core\Exceptions\RestException;
 use ServiceManager;
 
 class DefinitionExecutor
 {
+    /**
+     * Service type groups a plan step may target. Restricted to data sources so
+     * a plan can never dispatch to system/admin, scripted (RCE), auth, email,
+     * or the API Builder itself.
+     */
+    protected const ALLOWED_STEP_GROUPS = [
+        ServiceTypeGroups::DATABASE,
+        ServiceTypeGroups::FILE,
+        ServiceTypeGroups::REMOTE,
+    ];
+
+    /** Cap on steps per plan — each step dispatches a real backing request. */
+    protected const MAX_STEPS = 25;
+
+    /**
+     * Lower-cased service names this endpoint's API workspace permits, or null
+     * when the API has no workspace defined (then only the type allowlist below
+     * applies — preserves behaviour for APIs created before workspaces existed).
+     *
+     * @var string[]|null
+     */
+    protected $workspaceServices = null;
+
     /** HTTP verbs a service_request step is allowed to invoke. */
     protected const ALLOWED_METHODS = [
         Verbs::GET,
@@ -26,10 +53,18 @@ class DefinitionExecutor
      */
     public function execute(EndpointDefinition $endpoint, array $input = [], bool $dryRun = false)
     {
+        $this->workspaceServices = $this->resolveWorkspace($endpoint);
+
         $plan = (array)$endpoint->execution_plan;
         $steps = (array)array_get($plan, 'steps', []);
         if (empty($steps)) {
             throw new BadRequestException('Endpoint execution_plan.steps must contain at least one step.');
+        }
+        if (count($steps) > static::MAX_STEPS) {
+            throw new BadRequestException(
+                'Endpoint execution_plan has too many steps (max '
+                . static::MAX_STEPS . '). Each step dispatches a backing request.'
+            );
         }
 
         $context = [
@@ -80,6 +115,8 @@ class DefinitionExecutor
         if (empty($service)) {
             throw new BadRequestException('service_request step requires service.');
         }
+
+        $this->assertAllowedStepService($service);
 
         if (!in_array($method, static::ALLOWED_METHODS, true)) {
             throw new BadRequestException("Unsupported HTTP method '{$method}' in service_request step.");
@@ -164,6 +201,56 @@ class DefinitionExecutor
         }
 
         return $out;
+    }
+
+    /**
+     * Lower-cased names of the services in this endpoint's API workspace, or null
+     * if the API has no workspace (unrestricted apart from the type allowlist).
+     */
+    protected function resolveWorkspace(EndpointDefinition $endpoint): ?array
+    {
+        $apiId = $endpoint->api_id;
+        if (empty($apiId)) {
+            return null;
+        }
+
+        $serviceIds = ApiServiceLink::where('api_id', $apiId)->pluck('service_id')->all();
+        if (empty($serviceIds)) {
+            return null;
+        }
+
+        return Service::whereIn('id', $serviceIds)
+            ->pluck('name')
+            ->map(function ($n) { return strtolower((string)$n); })
+            ->all();
+    }
+
+    protected function assertAllowedStepService(string $service): void
+    {
+        // When the API defines a workspace, a step may only target a service in
+        // it — the composition boundary the designer declared. The type allowlist
+        // below still applies as a floor (no system/script/auth even if added).
+        if (
+            is_array($this->workspaceServices)
+            && !in_array(strtolower($service), $this->workspaceServices, true)
+        ) {
+            throw new ForbiddenException(
+                "Execution step service '{$service}' is not in this API's workspace."
+            );
+        }
+
+        $typeName = ServiceManager::getServiceTypeByName($service);
+        $typeInfo = $typeName ? ServiceManager::getServiceType($typeName) : null;
+        $group = $typeInfo ? $typeInfo->getGroup() : null;
+
+        if (!in_array($group, static::ALLOWED_STEP_GROUPS, true)) {
+            throw new ForbiddenException(
+                "Execution step service '{$service}'"
+                . ($typeName ? " (type '{$typeName}')" : '')
+                . ' is not an allowed data source. API Builder steps may only '
+                . 'target database, file, or remote API services.'
+            );
+        }
     }
 
     protected function normalizeResponseContent($content)

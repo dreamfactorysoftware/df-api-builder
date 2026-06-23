@@ -38,6 +38,9 @@ class DefinitionExecutor
      */
     protected $workspaceServices = null;
 
+    /** Per-step execution trace (key/type/target/status/preview/ms) for the test UI. */
+    public array $trace = [];
+
     /** HTTP verbs a service_request step is allowed to invoke. */
     protected const ALLOWED_METHODS = [
         Verbs::GET,
@@ -54,6 +57,7 @@ class DefinitionExecutor
     public function execute(EndpointDefinition $endpoint, array $input = [], bool $dryRun = false)
     {
         $this->workspaceServices = $this->resolveWorkspace($endpoint);
+        $this->trace = [];
 
         $plan = (array)$endpoint->execution_plan;
         $steps = (array)array_get($plan, 'steps', []);
@@ -83,13 +87,32 @@ class DefinitionExecutor
         $last = null;
         foreach ($steps as $index => $step) {
             $type = array_get($step, 'type', 'service_request');
-            if ($type !== 'service_request') {
-                throw new BadRequestException("Unsupported execution step type '{$type}'.");
-            }
-
             $key = array_get($step, 'output_key', array_get($step, 'id', 'step_' . $index));
-            $last = $this->executeServiceRequestStep($step, $context, $dryRun, $checkPermission);
-            $context['steps'][$key] = $last;
+            $entry = [
+                'key'      => $key,
+                'type'     => $type,
+                'service'  => array_get($step, 'service'),
+                'resource' => array_get($step, 'resource', ''),
+                'method'   => strtoupper((string)array_get($step, 'method', Verbs::GET)),
+            ];
+            $started = microtime(true);
+            try {
+                if ($type !== 'service_request') {
+                    throw new BadRequestException("Unsupported execution step type '{$type}'.");
+                }
+                $last = $this->executeServiceRequestStep($step, $context, $dryRun, $checkPermission);
+                $context['steps'][$key] = $last;
+                $entry['ok'] = true;
+                $entry['preview'] = $this->previewResult($last);
+            } catch (\Throwable $ex) {
+                $entry['ok'] = false;
+                $entry['error'] = $ex->getMessage();
+                $entry['ms'] = (int)round((microtime(true) - $started) * 1000);
+                $this->trace[] = $entry;
+                throw $ex;
+            }
+            $entry['ms'] = (int)round((microtime(true) - $started) * 1000);
+            $this->trace[] = $entry;
         }
 
         $mapping = (array)$endpoint->response_mapping;
@@ -98,6 +121,24 @@ class DefinitionExecutor
         }
 
         return $last;
+    }
+
+    /** Short human-readable summary of a step result for the test trace. */
+    protected function previewResult($result): string
+    {
+        if (is_array($result)) {
+            if (array_key_exists('dry_run', $result)) {
+                return 'dry-run: ' . ($result['method'] ?? '') . ' ' . ($result['service'] ?? '') . '/' . ($result['resource'] ?? '');
+            }
+            $rows = $result['resource'] ?? null;
+            if (is_array($rows) && array_is_list($rows)) {
+                return count($rows) . ' row(s)';
+            }
+            $json = json_encode($result);
+            return strlen($json) > 120 ? substr($json, 0, 120) . '…' : $json;
+        }
+        $s = is_scalar($result) ? (string)$result : gettype($result);
+        return strlen($s) > 120 ? substr($s, 0, 120) . '…' : $s;
     }
 
     protected function executeServiceRequestStep(array $step, array $context, bool $dryRun = false, bool $checkPermission = true)

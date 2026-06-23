@@ -54,10 +54,24 @@ class TestResource extends BaseRestResource
         // dispatching to backing services. Pass "dry_run": false to execute live.
         $dryRun = (bool)array_get($payload, 'dry_run', true);
 
-        return $executor->execute($endpoint, [
+        $input = [
             'path'  => (array)array_get($payload, 'path_params', []),
             'query' => (array)array_get($payload, 'query', []),
             'body'  => (array)array_get($payload, 'body', []),
-        ], $dryRun);
+        ];
+
+        // Opt-in step-by-step trace for the Test panel. Returns an envelope with
+        // per-step results and surfaces the failing step instead of a bare error.
+        // Legacy callers (no `trace`) keep the raw result shape.
+        if (array_get($payload, 'trace', false)) {
+            try {
+                $result = $executor->execute($endpoint, $input, $dryRun);
+                return ['ok' => true, 'dry_run' => $dryRun, 'result' => $result, 'trace' => $executor->trace];
+            } catch (\Throwable $ex) {
+                return ['ok' => false, 'dry_run' => $dryRun, 'error' => $ex->getMessage(), 'trace' => $executor->trace];
+            }
+        }
+
+        return $executor->execute($endpoint, $input, $dryRun);
     }
 }

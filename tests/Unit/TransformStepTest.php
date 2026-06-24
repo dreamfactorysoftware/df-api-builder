@@ -78,6 +78,34 @@ class TransformStepTest extends TestCase
         ));
     }
 
+    public function test_filter_keeps_matching_rows(): void
+    {
+        $rows = [['id' => 1, 'status' => 'shipped'], ['id' => 2, 'status' => 'pending'], ['id' => 3, 'status' => 'shipped']];
+        $this->assertSame(
+            [['id' => 1, 'status' => 'shipped'], ['id' => 3, 'status' => 'shipped']],
+            $this->op($rows, ['op' => 'filter', 'field' => 'status', 'cmp' => 'eq', 'value' => 'shipped'])
+        );
+    }
+
+    public function test_filter_comparators(): void
+    {
+        $rows = [['n' => 1], ['n' => 5], ['n' => 10]];
+        $this->assertSame([['n' => 5], ['n' => 10]], $this->op($rows, ['op' => 'filter', 'field' => 'n', 'cmp' => 'gte', 'value' => 5]));
+    }
+
+    public function test_filter_on_resource_wrapped_list(): void
+    {
+        $data = ['resource' => [['id' => 1, 'active' => true], ['id' => 2, 'active' => false]]];
+        $this->assertSame(['resource' => [['id' => 1, 'active' => true]]], $this->op($data, ['op' => 'filter', 'field' => 'active', 'cmp' => 'eq', 'value' => true]));
+    }
+
+    public function test_sort_by_field_asc_and_desc(): void
+    {
+        $rows = [['n' => 3], ['n' => 1], ['n' => 2]];
+        $this->assertSame([['n' => 1], ['n' => 2], ['n' => 3]], $this->op($rows, ['op' => 'sort', 'by' => 'n']));
+        $this->assertSame([['n' => 3], ['n' => 2], ['n' => 1]], $this->op($rows, ['op' => 'sort', 'by' => 'n', 'dir' => 'desc']));
+    }
+
     public function test_unsupported_op_throws(): void
     {
         $this->expectExceptionMessage("Unsupported transform op 'bogus'");

@@ -253,6 +253,21 @@ class DefinitionExecutor
                 return $n > 0 ? array_slice($list, 0, $n) : $list;
             case 'count':
                 return ['count' => count($this->extractList($data))];
+            case 'filter':
+                $field = (string)array_get($op, 'field');
+                $cmp   = (string)array_get($op, 'cmp', 'eq');
+                $val   = array_get($op, 'value');
+                return $this->withList($data, fn($list) => array_values(array_filter(
+                    $list,
+                    fn($row) => $this->matchFilter($row, $field, $cmp, $val)
+                )));
+            case 'sort':
+                $by  = (string)array_get($op, 'by');
+                $dir = strtolower((string)array_get($op, 'dir', 'asc'));
+                return $this->withList($data, function ($list) use ($by, $dir) {
+                    usort($list, fn($a, $b) => (is_array($a) ? ($a[$by] ?? null) : null) <=> (is_array($b) ? ($b[$by] ?? null) : null));
+                    return $dir === 'desc' ? array_reverse($list) : $list;
+                });
             case 'wrap':
                 return [(string)array_get($op, 'key', 'data') => $data];
             case 'unwrap':
@@ -292,6 +307,36 @@ class DefinitionExecutor
             return array_values($data);
         }
         return [$data];
+    }
+
+    /** Transform a list in place, preserving the resource-wrapper / bare-list shape. Non-lists pass through. */
+    protected function withList($data, callable $fn)
+    {
+        if (is_array($data) && isset($data['resource']) && is_array($data['resource'])) {
+            $data['resource'] = array_values($fn($data['resource']));
+            return $data;
+        }
+        if (is_array($data) && ($data === [] || array_keys($data) === range(0, count($data) - 1))) {
+            return array_values($fn($data));
+        }
+        return $data;
+    }
+
+    /** Compare a row's field against a value for the `filter` op. */
+    protected function matchFilter($row, string $field, string $cmp, $val): bool
+    {
+        $actual = is_array($row) ? ($row[$field] ?? null) : null;
+        switch ($cmp) {
+            case 'ne':       return $actual != $val;
+            case 'gt':       return $actual > $val;
+            case 'gte':      return $actual >= $val;
+            case 'lt':       return $actual < $val;
+            case 'lte':      return $actual <= $val;
+            case 'contains': return is_string($actual) && is_string($val) && str_contains($actual, $val);
+            case 'in':       return is_array($val) && in_array($actual, $val, false);
+            case 'eq':
+            default:         return $actual == $val;
+        }
     }
 
     protected function applyAliases($content, array $aliases)

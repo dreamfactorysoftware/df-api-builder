@@ -52,9 +52,13 @@ api-builder/test
 }
 ```
 
-Transform ops: `pick`, `omit`, `rename`, `defaults`, `first`, `limit`, `count`,
-`wrap`, `unwrap`. Each handles a resource-wrapped list, a bare list, or a single
-record.
+Transform ops: `pick`, `omit`, `rename`, `defaults`, `filter`, `sort`, `first`,
+`limit`, `count`, `wrap`, `unwrap`. Each handles a resource-wrapped list, a bare
+list, or a single record.
+
+- `filter` — `{ "op": "filter", "field": "status", "cmp": "eq", "value": "shipped" }`
+  (cmp: `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `contains`, `in`).
+- `sort` — `{ "op": "sort", "by": "total", "dir": "desc" }`.
 
 ## Testing an endpoint (step-by-step trace)
 

@@ -30,4 +30,49 @@ api-builder/test
 }
 ```
 
-The endpoint execution plan currently supports `service_request` steps.
+## Execution-plan step types
+
+- **`service_request`** — dispatch to a backing DF service (database / file /
+  remote) in the API's workspace. Selectors (service/resource/method) are
+  admin-authored and static; only `params`/`body` resolve caller input.
+- **`transform`** — reshape a prior step's data in-memory (no backing request),
+  so an endpoint can shape its response without a script. `from` resolves a
+  context path; `ops` run in order.
+
+```json
+{
+  "id": "shaped",
+  "type": "transform",
+  "from": "{steps.customers.resource}",
+  "ops": [
+    { "op": "pick", "fields": ["id", "name", "email"] },
+    { "op": "rename", "map": { "name": "customer_name" } },
+    { "op": "limit", "count": 25 }
+  ]
+}
+```
+
+Transform ops: `pick`, `omit`, `rename`, `defaults`, `first`, `limit`, `count`,
+`wrap`, `unwrap`. Each handles a resource-wrapped list, a bare list, or a single
+record.
+
+## Testing an endpoint (step-by-step trace)
+
+`POST api-builder/test` with `"trace": true` returns an envelope with a
+per-step trace — each step's target, status, output preview, and timing, and it
+pinpoints the failing step:
+
+```json
+{
+  "ok": true,
+  "result": { "...": "mapped response" },
+  "trace": [
+    { "key": "customers", "type": "service_request", "service": "db",
+      "resource": "_table/customers", "method": "GET", "ok": true,
+      "preview": "25 row(s)", "ms": 11 }
+  ]
+}
+```
+
+Without `trace`, the raw result is returned (back-compatible). The admin UI's
+**Preview** panel renders this trace.

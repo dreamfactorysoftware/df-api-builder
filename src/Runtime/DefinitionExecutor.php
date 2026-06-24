@@ -97,10 +97,18 @@ class DefinitionExecutor
             ];
             $started = microtime(true);
             try {
-                if ($type !== 'service_request') {
-                    throw new BadRequestException("Unsupported execution step type '{$type}'.");
+                switch ($type) {
+                    case 'service_request':
+                        $last = $this->executeServiceRequestStep($step, $context, $dryRun, $checkPermission);
+                        break;
+                    case 'transform':
+                        // In-memory reshape of prior data — no backing request,
+                        // so it runs in dry-run too (no live side effects).
+                        $last = $this->executeTransformStep($step, $context);
+                        break;
+                    default:
+                        throw new BadRequestException("Unsupported execution step type '{$type}'.");
                 }
-                $last = $this->executeServiceRequestStep($step, $context, $dryRun, $checkPermission);
                 $context['steps'][$key] = $last;
                 $entry['ok'] = true;
                 $entry['preview'] = $this->previewResult($last);
@@ -203,6 +211,87 @@ class DefinitionExecutor
         }
 
         return $content;
+    }
+
+    /**
+     * In-memory reshape of a prior step's data — no backing request, so an
+     * endpoint can shape its response without a script. `from` resolves a
+     * context path (e.g. "{steps.customers.resource}"); `ops` run in order.
+     */
+    protected function executeTransformStep(array $step, array $context)
+    {
+        $data = $this->resolveValue(array_get($step, 'from'), $context);
+        foreach ((array)array_get($step, 'ops', []) as $op) {
+            $data = $this->applyTransformOp($data, (array)$op);
+        }
+
+        return $data;
+    }
+
+    protected function applyTransformOp($data, array $op)
+    {
+        $name = (string)array_get($op, 'op');
+        switch ($name) {
+            case 'pick':
+                $keep = array_flip((array)array_get($op, 'fields', []));
+                return $this->mapRows($data, fn($row) => is_array($row) ? array_intersect_key($row, $keep) : $row);
+            case 'omit':
+                $drop = array_flip((array)array_get($op, 'fields', []));
+                return $this->mapRows($data, fn($row) => is_array($row) ? array_diff_key($row, $drop) : $row);
+            case 'rename':
+                $map = (array)array_get($op, 'map', []);
+                return $this->mapRows($data, fn($row) => $this->renameKeys($row, $map));
+            case 'defaults':
+                $defs = (array)array_get($op, 'values', []);
+                return $this->mapRows($data, fn($row) => is_array($row) ? $row + $defs : $row);
+            case 'first':
+                $list = $this->extractList($data);
+                return $list[0] ?? null;
+            case 'limit':
+                $n = (int)array_get($op, 'count', 0);
+                $list = $this->extractList($data);
+                return $n > 0 ? array_slice($list, 0, $n) : $list;
+            case 'count':
+                return ['count' => count($this->extractList($data))];
+            case 'wrap':
+                return [(string)array_get($op, 'key', 'data') => $data];
+            case 'unwrap':
+                $key = (string)array_get($op, 'key', 'resource');
+                return (is_array($data) && array_key_exists($key, $data)) ? $data[$key] : $data;
+            default:
+                throw new BadRequestException("Unsupported transform op '{$name}'.");
+        }
+    }
+
+    /** Apply a callback over a resource-wrapped list, a bare list, or a single record. */
+    protected function mapRows($data, callable $fn)
+    {
+        if (!is_array($data)) {
+            return $data;
+        }
+        if (isset($data['resource']) && is_array($data['resource'])) {
+            $data['resource'] = array_map($fn, $data['resource']);
+            return $data;
+        }
+        if ($data === [] || array_keys($data) === range(0, count($data) - 1)) {
+            return array_map($fn, $data);
+        }
+        return $fn($data);
+    }
+
+    /** Pull a flat list of rows out of a resource-wrapper, bare list, or single record. */
+    protected function extractList($data): array
+    {
+        if (!is_array($data)) {
+            return [];
+        }
+        if (isset($data['resource']) && is_array($data['resource'])) {
+            return array_values($data['resource']);
+        }
+        if ($data === [] || array_keys($data) === range(0, count($data) - 1)) {
+            return array_values($data);
+        }
+        return [$data];
     }
 
     protected function applyAliases($content, array $aliases)

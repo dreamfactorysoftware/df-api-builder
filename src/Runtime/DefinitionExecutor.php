@@ -193,6 +193,16 @@ class DefinitionExecutor
         $status = $response->getStatusCode();
         $content = $this->normalizeResponseContent($response->getContent());
 
+        // Enforce a response size limit to prevent memory exhaustion from large responses.
+        $maxResponseSize = 10 * 1024 * 1024; // 10MB
+        if (is_string($content) && strlen($content) > $maxResponseSize) {
+            throw new BadRequestException(
+                'Response exceeds maximum allowed size (' . ($maxResponseSize / 1024 / 1024) . 'MB).'
+            );
+        }
+
+        $content = $this->filterSensitiveFields($content);
+
         if ($status < 200 || $status >= 300) {
             $message = "Service request step failed with status {$status}.";
             if (is_array($content) && isset($content['error']['message'])) {
@@ -426,6 +436,54 @@ class DefinitionExecutor
                 . 'target database, file, or remote API services.'
             );
         }
+    }
+
+    /**
+     * Strip known sensitive field names from response data to prevent accidental
+     * leakage of passwords, tokens, or PII from backing services.
+     */
+    protected function filterSensitiveFields($content)
+    {
+        if (!is_array($content)) {
+            return $content;
+        }
+
+        // Fields that should never appear in API Builder responses.
+        $sensitivePatterns = [
+            '/password/i',
+            '/secret/i',
+            '/token/i',
+            '/api_key/i',
+            '/private_key/i',
+            '/credential/i',
+        ];
+
+        return $this->filterArrayRecursive($content, $sensitivePatterns);
+    }
+
+    /** Recursively filter sensitive keys from nested arrays. */
+    protected function filterArrayRecursive(array $data, array $sensitivePatterns): array
+    {
+        $filtered = [];
+        foreach ($data as $key => $value) {
+            $isSensitive = false;
+            foreach ($sensitivePatterns as $pattern) {
+                if (preg_match($pattern, (string)$key)) {
+                    $isSensitive = true;
+                    break;
+                }
+            }
+
+            if ($isSensitive) {
+                $filtered[$key] = '[FILTERED]';
+            } elseif (is_array($value)) {
+                $filtered[$key] = $this->filterArrayRecursive($value, $sensitivePatterns);
+            } else {
+                $filtered[$key] = $value;
+            }
+        }
+
+        return $filtered;
     }
 
     protected function normalizeResponseContent($content)

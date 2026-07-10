@@ -16,6 +16,38 @@ class TestResource extends BaseRestResource
     protected function handlePOST()
     {
         $payload = $this->getPayloadData();
+
+        // Rate limit the test endpoint to prevent abuse. 10 requests per minute per IP.
+        $rateLimit = Session::get('rate_limit', []);
+        $now = time();
+        $windowStart = $now - 60;
+
+        // Clean old entries
+        foreach ($rateLimit as $k => &$v) {
+            if (is_array($v)) {
+                $timestamps = array_values(array_filter($v, fn($t) => (int)$t > $windowStart));
+                if (empty($timestamps)) {
+                    unset($rateLimit[$k]);
+                    continue;
+                }
+                $v = $timestamps;
+            }
+        }
+
+        // Count this IP's requests in the window
+        $ip = $this->request->getClientIp() ?? 'unknown';
+        if (!isset($rateLimit[$ip])) {
+            $rateLimit[$ip] = [];
+        }
+        $recentCount = count(array_values(array_filter($rateLimit[$ip], fn($t) => (int)$t > $windowStart)));
+
+        if ($recentCount >= 10) {
+            throw new BadRequestException('Test endpoint rate limit exceeded. Try again later.');
+        }
+
+        $rateLimit[$ip][] = $now;
+        Session::set('rate_limit', $rateLimit);
+
         $endpointId = array_get($payload, 'endpoint_id', array_get($payload, 'endpointId'));
 
         if (!empty($endpointId)) {

@@ -33,6 +33,20 @@ class EndpointDefinition extends BaseSystemModel
                 );
             }
 
+            // Audit log privileged endpoint creation/modification.
+            if (static::policyIsPrivileged($endpoint->policy)) {
+                try {
+                    \Log::warning('API Builder: privileged endpoint created/modified', [
+                        'endpoint_id' => $endpoint->id,
+                        'api_id'      => $endpoint->api_id,
+                        'user_id'     => auth()->id(),
+                        'path'        => $endpoint->path,
+                    ]);
+                } catch (\Throwable $e) {
+                    // Logging failure must not block the save.
+                }
+            }
+
             return true;
         });
     }

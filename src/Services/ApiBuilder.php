@@ -211,6 +211,18 @@ class ApiBuilder extends BaseRestService
             return false;
         }
 
+        // Validate path parameters — reject null bytes and control characters.
+        foreach ($paramNames as $idx => $name) {
+            if (isset($matches[$idx + 1])) {
+                $val = $matches[$idx + 1];
+                if (preg_match('/[\x00-\x1f]/', $val)) {
+                    throw new \DreamFactory\Core\Exceptions\BadRequestException(
+                        "Path parameter '{$name}' contains invalid characters."
+                    );
+                }
+            }
+        }
+
         array_shift($matches);
         return array_combine($paramNames, $matches) ?: [];
     }

@@ -35,7 +35,9 @@ class TestResource extends BaseRestResource
         }
 
         // Count this IP's requests in the window
-        $ip = $this->request->getClientIp() ?? 'unknown';
+        // ServiceRequest exposes no client-ip accessor; read the underlying
+        // Illuminate request (null outside HTTP, e.g. script-invoked calls).
+        $ip = request()->ip() ?? 'unknown';
         if (!isset($rateLimit[$ip])) {
             $rateLimit[$ip] = [];
         }
@@ -46,7 +48,7 @@ class TestResource extends BaseRestResource
         }
 
         $rateLimit[$ip][] = $now;
-        Session::set('rate_limit', $rateLimit);
+        Session::put('rate_limit', $rateLimit);
 
         $endpointId = array_get($payload, 'endpoint_id', array_get($payload, 'endpointId'));
 

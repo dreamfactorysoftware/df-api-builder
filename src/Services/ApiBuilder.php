@@ -59,6 +59,13 @@ class ApiBuilder extends BaseRestService
             return parent::handleRequest($request, $resource);
         }
 
+        // Access management (role editor) requests the component list via
+        // GET /?as_access_list=true; that must reach the base handler and
+        // never be dispatched as a built-API runtime call.
+        if (empty($resource) && $request->getParameterAsBool('as_access_list')) {
+            return parent::handleRequest($request, $resource);
+        }
+
         $firstSegment = explode('/', trim((string)$resource, '/'))[0] ?? '';
         if ($this->name !== 'api_builder' || ($resource && !array_key_exists($firstSegment, static::$resources))) {
             $result = $this->handleBuiltApiRequest($request, $resource);
@@ -81,6 +88,29 @@ class ApiBuilder extends BaseRestService
 
     public function getAccessList()
     {
+        // A built API's components are its own endpoint paths — not the
+        // designer resources, and not other APIs' base paths.
+        if ($this->name !== 'api_builder') {
+            $resources = ['', '*'];
+            $api = ApiDefinition::query()
+                ->where('base_path', $this->name)
+                ->where('status', '!=', 'archived')
+                ->first();
+            if ($api) {
+                $paths = EndpointDefinition::query()
+                    ->where('api_id', $api->id)
+                    ->where('is_active', true)
+                    ->pluck('path');
+                foreach ($paths as $path) {
+                    $path = trim($path, '/');
+                    $resources[] = $path;
+                    $resources[] = $path . '/*';
+                }
+            }
+
+            return array_values(array_unique($resources));
+        }
+
         $resources = parent::getAccessList();
         foreach (static::$resources as $name => $info) {
             $resources[] = $name . '/';
@@ -125,11 +155,11 @@ class ApiBuilder extends BaseRestService
         ];
     }
 
-    protected function handleBuiltApiRequest(ServiceRequestInterface $request, string $resource)
+    protected function handleBuiltApiRequest(ServiceRequestInterface $request, ?string $resource)
     {
         if ($this->name !== 'api_builder') {
             $basePath = $this->name;
-            $runtimePath = '/' . trim($resource, '/');
+            $runtimePath = '/' . trim((string)$resource, '/');
         } else {
             $segments = explode('/', trim($resource, '/'));
             $basePath = array_shift($segments);

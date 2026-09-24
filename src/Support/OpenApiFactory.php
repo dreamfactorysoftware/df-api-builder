@@ -25,8 +25,8 @@ class OpenApiFactory
 
             foreach ($endpoints as $endpoint) {
                 $path = $includeBasePath
-                    ? '/' . trim($definition->base_path, '/') . $endpoint->path
-                    : $endpoint->path;
+                    ? '/' . trim($definition->base_path, '/') . '/' . ltrim($endpoint->path, '/')
+                    : '/' . ltrim($endpoint->path, '/');
                 $method = strtolower($endpoint->method);
                 $paths[$path][$method] = $this->operation($definition, $endpoint);
             }
